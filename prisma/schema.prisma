@@ -1,0 +1,263 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────────────
+
+enum AccountType {
+  INDIVIDUAL
+  WHOLESALER
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  EXPIRED
+  REMOVED
+}
+
+enum ListingType {
+  FREE
+  FOR_SALE
+}
+
+enum PlanId {
+  FREE
+  PREMIUM
+  PREMIUM_PLUS
+  WHOLESALER
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+enum NotificationType {
+  LISTING_SOLD
+  NEW_MESSAGE
+  PRICE_DROP
+  LISTING_EXPIRED
+  SUBSCRIPTION_RENEWED
+  SUBSCRIPTION_EXPIRING
+  AD_BUMP_AVAILABLE
+  SYSTEM
+}
+
+// ─── Models ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String      @id @default(cuid())
+  email         String      @unique
+  emailVerified DateTime?
+  passwordHash  String
+  firstName     String
+  lastName      String
+  postcode      String
+  postcodeNorm  String      // Normalized postcode (no spaces, uppercase) for queries
+  phone         String?
+  occupation    String?
+  accountType   AccountType @default(INDIVIDUAL)
+  role          UserRole    @default(USER)
+  businessName  String?
+  businessType  String?
+  avatarUrl     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  listings         Listing[]
+  watchedItems     WatchedItem[]
+  sentMessages     Message[]       @relation("SentMessages")
+  buyerConvos      Conversation[]  @relation("BuyerConversations")
+  sellerConvos     Conversation[]  @relation("SellerConversations")
+  subscription     Subscription?
+  adBumpCredits    AdBumpCredit[]
+  notifications    Notification[]
+
+  @@index([postcodeNorm])
+  @@index([accountType])
+}
+
+model Listing {
+  id          String        @id @default(cuid())
+  title       String
+  description String
+  price       Int           // Price in pence (0 = free)
+  listingType ListingType
+  category    String        // Matches category slug from data/categories.ts
+  condition   String?
+  postcode    String
+  lat         Float?
+  lng         Float?
+  status      ListingStatus @default(ACTIVE)
+  viewCount   Int           @default(0)
+  bumpedAt    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  images        ListingImage[]
+  watchedItems  WatchedItem[]
+  conversations Conversation[]
+
+  @@index([status, category, bumpedAt, createdAt])
+  @@index([userId])
+  @@index([category])
+}
+
+model ListingImage {
+  id        String   @id @default(cuid())
+  url       String
+  key       String   // S3 object key for deletion
+  order     Int      // Display order (0-based)
+  createdAt DateTime @default(now())
+
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId])
+}
+
+model WatchedItem {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+}
+
+model Conversation {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  listingId String
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     User    @relation("BuyerConversations", fields: [buyerId], references: [id], onDelete: Cascade)
+  sellerId  String
+  seller    User    @relation("SellerConversations", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  messages Message[]
+
+  @@unique([listingId, buyerId])
+  @@index([sellerId])
+}
+
+model Message {
+  id        String    @id @default(cuid())
+  content   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  plan                 PlanId
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  stripePriceId        String?
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AdBumpCredit {
+  id           String   @id @default(cuid())
+  totalCredits Int
+  usedCredits  Int      @default(0)
+  periodStart  DateTime
+  periodEnd    DateTime
+  createdAt    DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, periodEnd])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  title     String
+  message   String
+  readAt    DateTime?
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model BlogPost {
+  id          String    @id @default(cuid())
+  title       String
+  slug        String    @unique
+  excerpt     String?
+  content     String
+  coverImage  String?
+  author      String
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model PressArticle {
+  id            String   @id @default(cuid())
+  title         String
+  url           String
+  source        String
+  publishedDate DateTime
+  createdAt     DateTime @default(now())
+}
+
+model Partner {
+  id          String  @id @default(cuid())
+  name        String
+  logo        String?
+  url         String?
+  description String?
+  order       Int     @default(0)
+}
+
+model CommunityProject {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  images      Json     // Array of image URLs
+  location    String?
+  createdAt   DateTime @default(now())
+}
